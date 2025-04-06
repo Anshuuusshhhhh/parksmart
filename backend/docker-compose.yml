@@ -1,0 +1,157 @@
+# backend/docker-compose.yml
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - parking_network
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      # Expose the internal port 9092 for services within the docker network
+      # Expose 29092 for external connections IF NEEDED from your host machine (e.g., for debugging)
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      # Advertise the listener for internal docker network communication
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Define topics to be created automatically
+      KAFKA_CREATE_TOPICS: "checkin_requests:1:1,checkout_requests:1:1" # topic:partitions:replicas
+    networks:
+      - parking_network
+
+  couchdb:
+    image: couchdb:latest
+    hostname: couchdb
+    container_name: couchdb
+    ports:
+      - "5984:5984" # Map host port to container port
+    environment:
+      COUCHDB_USER: admin 
+      COUCHDB_PASSWORD: password
+    volumes:
+      - couchdb_data:/opt/couchdb/data # Persist data
+    networks:
+      - parking_network
+
+  init-couchdb:
+    build:
+      context: ./init_db
+      dockerfile: Dockerfile # Assumes a simple Dockerfile in init_db just to run the script
+    container_name: init-couchdb
+    depends_on:
+      couchdb: # Wait for couchdb service to be healthy (or just started)
+        condition: service_started # For simple cases; use service_healthy if couchdb image supports healthchecks
+ # Pass environment variables from .env file
+    environment:
+      # Override host for script running inside docker network
+      COUCHDB_HOST: couchdb
+    command: python setup_couchdb.py
+    networks:
+      - parking_network
+    # This service only runs once to initialize, then exits.
+
+  auth_service:
+    build:
+      context: .
+    container_name: auth_service
+    ports:
+      - "5001:5001" # Expose port defined in .env
+
+    environment:
+      FLASK_RUN_PORT: 5001
+      COUCHDB_HOST: couchdb # Use service name for inter-container communication
+    depends_on:
+      - couchdb
+    volumes:
+      - .:/backend # Mount local code for development
+    command: python auth_service.py
+    networks:
+      - parking_network
+
+  signup_service:
+    build:
+      context: .
+    container_name: signup_service
+    ports:
+      - "5002:5002"
+
+    environment:
+      FLASK_RUN_PORT: 5002
+      COUCHDB_HOST: couchdb
+    depends_on:
+      - couchdb
+    volumes:
+      - .:/backend
+    command: python signup_service.py
+    networks:
+      - parking_network
+
+  parking_service:
+    build:
+      context: .
+    container_name: parking_service
+    ports:
+      - "5003:5003"
+
+    environment:
+      FLASK_RUN_PORT: 5003
+      COUCHDB_HOST: couchdb
+      KAFKA_BROKER: kafka:9092 # Use service name for Kafka broker
+    depends_on:
+      - couchdb
+      - kafka
+      - init-couchdb # Ensure DB is initialized before this starts
+    volumes:
+      - .:/backend
+      # Optional: Mount common utilities if used
+      # - ./common:/app/common
+    command: python parking_service.py
+    networks:
+      - parking_network
+
+  # Separate container for the Kafka consumer for check-ins
+  kafka_consumer_worker:
+    build:
+      context: . # Can reuse the parking_service build context
+    container_name: kafka_consumer_worker
+
+    environment:
+      COUCHDB_HOST: couchdb
+      KAFKA_BROKER: kafka:9092
+    depends_on:
+      - couchdb
+      - kafka
+      - init-couchdb
+    volumes:
+      - .:/backend # Mount code
+      # - ./common:/app/common
+    # Run the consumer script instead of Flask
+    command: python kafka_consumer.py
+    networks:
+      - parking_network
+    restart: on-failure # Restart if the consumer script crashes
+
+networks:
+  parking_network:
+    driver: bridge
+
+volumes:
+  couchdb_data: # Define the named volume for persistence

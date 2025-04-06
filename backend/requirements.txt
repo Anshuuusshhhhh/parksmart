@@ -1,0 +1,7 @@
+Flask
+requests
+python-dotenv
+couchdb
+werkzeug # For password hashing
+Flask-Cors # To allow requests from your frontend
+kafka-python
