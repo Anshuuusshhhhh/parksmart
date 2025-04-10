@@ -53,8 +53,7 @@ services:
 
   init-couchdb:
     build:
-      context: ./init_db
-      dockerfile: Dockerfile # Assumes a simple Dockerfile in init_db just to run the script
+      context: .
     container_name: init-couchdb
     depends_on:
       couchdb: # Wait for couchdb service to be healthy (or just started)
@@ -80,6 +79,8 @@ services:
       COUCHDB_HOST: couchdb # Use service name for inter-container communication
     depends_on:
       - couchdb
+      - init-couchdb
+      
     volumes:
       - .:/backend # Mount local code for development
     command: python auth_service.py
@@ -98,6 +99,7 @@ services:
       COUCHDB_HOST: couchdb
     depends_on:
       - couchdb
+      - init-couchdb
     volumes:
       - .:/backend
     command: python signup_service.py
@@ -141,7 +143,7 @@ services:
       - kafka
       - init-couchdb
     volumes:
-      - .:/backend # Mount code
+      - ./backend:/app/backend # Mount code
       # - ./common:/app/common
     # Run the consumer script instead of Flask
     command: python kafka_consumer.py

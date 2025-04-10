@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from flask_cors import CORS
 import time
+import requests
 
 load_dotenv()
 
@@ -25,20 +26,76 @@ PARKING_LOTS_DB_NAME = os.getenv('PARKING_LOTS_DB_NAME','parking_lots')
 
 # COUCHDB_URL = f"{COUCHDB_PROTO}://{COUCHDB_USER}:{COUCHDB_PASSWORD}@{COUCHDB_HOST}:{COUCHDB_PORT}/"
 
-COUCHDB_URL = "http://admin:password@localhost:5984/"
+COUCHDB_URL = "http://admin:password@couchdb:5984/"
 
-try:
-    couch = couchdb.Server(COUCHDB_URL)
-    parking_db = couch[PARKING_LOTS_DB_NAME]
-    # users_db = couch[USERS_DB_NAME] # Uncomment if user validation needed here
-    print("Parking Service API: Connected to CouchDB parking_lots database.")
-except Exception as e:
-    print(f"Parking Service API: Error connecting to CouchDB: {e}")
-    parking_db = None
-    # users_db = None
+
+# Retry parameters
+MAX_RETRIES = 5 # Increase from 3 for more tolerance during startup
+RETRY_DELAY_SECONDS = 3 # Wait time between retries
+
+couch_server = None
+parking_db = None
+
+for attempt in range(MAX_RETRIES):
+    try:
+        print(f"Parking Service: Attempting CouchDB connection ({attempt + 1}/{MAX_RETRIES})...")
+        # 1. Connect to the server
+        couch_server = couchdb.Server(COUCHDB_URL)
+        # Verify connection by getting server info (optional but good)
+        couch_server.version()
+        print("Parking Service: Connected to CouchDB server.")
+
+        # 2. Try accessing the specific database
+        if PARKING_LOTS_DB_NAME in couch_server:
+            parking_db = couch_server[PARKING_LOTS_DB_NAME]
+            print(f"Parking Service: Successfully accessed database '{PARKING_LOTS_DB_NAME}'.")
+
+            break # Connection and database access successful, exit the loop
+        else:
+            # Server is up, but DB doesn't exist yet (init script might be running)
+            print(f"Parking Service: Database '{PARKING_LOTS_DB_NAME}' not found yet.")
+            # Raise an exception to trigger the retry logic below
+            raise couchdb.ResourceNotFound(f"Database {PARKING_LOTS_DB_NAME} not found")
+
+    except (requests.exceptions.ConnectionError, ConnectionRefusedError) as e:
+        print(f"Parking Service: Connection Error (Attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+        if attempt < MAX_RETRIES - 1:
+            print(f"Retrying in {RETRY_DELAY_SECONDS} seconds...")
+            time.sleep(RETRY_DELAY_SECONDS)
+        else:
+            print("Parking Service: Max connection retries reached. Could not connect to CouchDB server.")
+            # parking_db remains None
+
+    except couchdb.ResourceNotFound as e:
+        # Specific handling for database not found after successful server connection
+        print(f"Parking Service: Error accessing database (Attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+        if attempt < MAX_RETRIES - 1:
+            print(f"Database might still be initializing. Retrying in {RETRY_DELAY_SECONDS} seconds...")
+            time.sleep(RETRY_DELAY_SECONDS)
+        else:
+            print(f"Parking Service: Max retries reached. Database '{PARKING_LOTS_DB_NAME}' not found.")
+            # parking_db remains None
+
+    except Exception as e:
+        # Catch other potential errors during connection/access
+        print(f"Parking Service: An unexpected error occurred during CouchDB setup (Attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+        if attempt < MAX_RETRIES - 1:
+            print(f"Retrying in {RETRY_DELAY_SECONDS} seconds...")
+            time.sleep(RETRY_DELAY_SECONDS)
+        else:
+            print("Parking Service: Max retries reached due to unexpected errors.")
+            # parking_db remains None
+
+# Check if connection succeeded after retries
+if not parking_db:
+    print("Parking Service: WARNING - Failed to connect to CouchDB database after all retries. Service might not function correctly.")
+    # Depending on the service, you might want Flask to exit or keep running but log errors.
+    # For now, it will continue, and endpoints will return 500 if parking_db is None.
+
+
 
 # --- Kafka Connection ---
-KAFKA_BROKER = os.getenv('KAFKA_BROKER', 'localhost:9092')
+KAFKA_BROKER = os.getenv('KAFKA_BROKER', 'kafka:9092')
 CHECKIN_TOPIC = os.getenv('CHECKIN_TOPIC',"checkin_requests")
 CHECKOUT_TOPIC = os.getenv('CHECKOUT_TOPIC','checkout_requests') # Define checkout topic
 kafka_producer = None
