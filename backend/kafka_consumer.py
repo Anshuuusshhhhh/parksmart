@@ -15,12 +15,13 @@ COUCHDB_PROTO = os.getenv('COUCHDB_PROTO', 'http')
 COUCHDB_HOST = os.getenv('COUCHDB_HOST', 'localhost')
 COUCHDB_PORT = os.getenv('COUCHDB_PORT', '5984')
 PARKING_LOTS_DB_NAME = os.getenv('PARKING_LOTS_DB_NAME')
-COUCHDB_URL = f"{COUCHDB_PROTO}://{COUCHDB_USER}:{COUCHDB_PASSWORD}@{COUCHDB_HOST}:{COUCHDB_PORT}/"
 
+# COUCHDB_URL = f"{COUCHDB_PROTO}://{COUCHDB_USER}:{COUCHDB_PASSWORD}@{COUCHDB_HOST}:{COUCHDB_PORT}/"
+COUCHDB_URL = "http://admin:password@couchdb:5984/"
 # --- Kafka Connection ---
-KAFKA_BROKER = os.getenv('KAFKA_BROKER', 'localhost:9092')
-CHECKIN_TOPIC = os.getenv('CHECKIN_TOPIC')
-CHECKOUT_TOPIC = os.getenv('CHECKOUT_TOPIC')
+KAFKA_BROKER = os.getenv('KAFKA_BROKER', 'kafka:9092')
+CHECKIN_TOPIC = os.getenv('CHECKIN_TOPIC','checkin_requests')
+CHECKOUT_TOPIC = os.getenv('CHECKOUT_TOPIC','checkout_requests')
 CONSUMER_GROUP_ID = 'parking-service-group' # Consumer group ID
 
 # Retry database connection
@@ -42,7 +43,7 @@ for i in range(10): # More retries for essential service
 # Function to connect Kafka Consumer with retries
 def create_kafka_consumer(topic, group_id):
     consumer = None
-    for i in range(10):
+    for i in range(5):
         try:
             consumer = KafkaConsumer(
                 topic,
@@ -56,7 +57,7 @@ def create_kafka_consumer(topic, group_id):
             return consumer
         except Exception as e:
             print(f"Kafka Consumer: Kafka connection attempt {i+1} failed for topic '{topic}': {e}")
-            if i < 9:
+            if i < 4:
                 time.sleep(5)
             else:
                 print(f"Kafka Consumer: Could not connect to Kafka for topic '{topic}' after multiple retries.")

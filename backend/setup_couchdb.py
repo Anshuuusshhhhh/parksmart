@@ -1,4 +1,4 @@
-# backend/init_db/setup_couchdb.py
+# backend/setup_couchdb.py
 import couchdb
 import os
 import time
@@ -17,7 +17,7 @@ PARKING_LOTS_DB_NAME = os.getenv('PARKING_LOTS_DB_NAME','parking_lots')
 
 # COUCHDB_URL = f"{COUCHDB_PROTO}://{COUCHDB_USER}:{COUCHDB_PASSWORD}@{COUCHDB_HOST}:{COUCHDB_PORT}/"
 
-COUCHDB_URL = "http://admin:password@localhost:5984/"
+COUCHDB_URL = "http://admin:password@couchdb:5984/"
 
 NUM_LOTS_PER_LOCATION = 10
 PARKING_LOCATIONS = ["lot_a", "lot_b", "lot_c"] # Corresponds to user choices
